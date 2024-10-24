@@ -9,7 +9,7 @@ import Foundation
 import Combine
 
 class HomeViewModel {
-
+    
     @Published private(set) var promotions: [Promotion] = []
     
     @Published private(set) var categories: [Category] = []
@@ -21,6 +21,8 @@ class HomeViewModel {
     @Published private(set) var epgs: [Asset] = []
     
     @Published private(set) var snapshotItems: [Section: [Item]] = [:]
+
+    private var sectionContentGroups: [Section: ContentGroup] = [:]
 
     private let homeService: HomeService
     
@@ -47,45 +49,30 @@ class HomeViewModel {
             .replaceError(with: ())
             .eraseToAnyPublisher()
 
-        promotionsPublisher
+        Publishers.Zip3(promotionsPublisher, categoriesPublisher, contentGroupsPublisher)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] promotions in
+            .sink { [weak self] promotions, categories, _ in
                 self?.promotions = promotions
-                self?.prepareSnapshot()
-            }
-            .store(in: &cancellables)
-
-        categoriesPublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] categories in
                 self?.categories = categories
-                self?.prepareSnapshot()
-            }
-            .store(in: &cancellables)
-
-        contentGroupsPublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
                 self?.prepareSnapshot()
             }
             .store(in: &cancellables)
     }
 
     private func filterAssets(from contentGroups: ContentGroupResponseModel) {
-//        self.series = []
-//        self.livechannels = []
-//        self.epgs = []
-
         contentGroups.forEach { contentGroup in
             if contentGroup.type.contains(.series) {
-                self.series.append(contentsOf: contentGroup.assets)
+                series.append(contentsOf: contentGroup.assets)
+                sectionContentGroups[.series] = contentGroup
             }
             if contentGroup.type.contains(.livechannel) {
-                self.livechannels.append(contentsOf: contentGroup.assets)
+                livechannels.append(contentsOf: contentGroup.assets)
+                sectionContentGroups[.livechannels] = contentGroup
             }
             if contentGroup.type.contains(.epg) {
-                self.epgs.append(contentsOf: contentGroup.assets)
-            }
+                epgs.append(contentsOf: contentGroup.assets)
+                sectionContentGroups[.epgs] = contentGroup
+            }           
         }
     }
 
@@ -95,5 +82,14 @@ class HomeViewModel {
         snapshotItems[.series] = series.map { .series($0) }
         snapshotItems[.livechannels] = livechannels.map { .livechannel($0) }
         snapshotItems[.epgs] = epgs.map { .epg($0) }
+    }
+
+    func canDeleteSection(_ section: Section) -> Bool {
+        return sectionContentGroups[section]?.canBeDeleted ?? false
+    }
+
+    func removeSection(_ section: Section) {
+        sectionContentGroups[section] = nil
+        snapshotItems[section] = nil
     }
 }

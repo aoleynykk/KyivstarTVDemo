@@ -7,13 +7,41 @@
 
 import UIKit
 
+protocol HomeViewPromotionsScrollDelegate: AnyObject {
+    func didScrollPromotions(point: CGPoint)
+}
+
 class HomeView: UIView {
 
-    var collectionView: UICollectionView = {
-        let obj = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
-        obj.translatesAutoresizingMaskIntoConstraints = false
-        obj.backgroundColor = .clear
-        return obj
+    weak var scrollDelegate: HomeViewPromotionsScrollDelegate?
+
+    private let headerImageView: UIImageView = {
+        let imageView = UIImageView(image: UIImage(named: "logo_image"))
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFit
+        return imageView
+    }()
+
+    lazy var collectionView: UICollectionView = {
+        let layout = UICollectionViewCompositionalLayout { [weak self] sectionIndex, _ in
+            return self?.createSectionLayout(for: sectionIndex)
+        }
+        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        collectionView.backgroundColor = .clear
+        collectionView.showsVerticalScrollIndicator = false
+        return collectionView
+    }()
+
+    let pageControl: UIPageControl = {
+        let pageControl = UIPageControl()
+        pageControl.translatesAutoresizingMaskIntoConstraints = false
+        pageControl.currentPage = 0
+        pageControl.pageIndicatorTintColor = .lightGray
+        pageControl.currentPageIndicatorTintColor = .white
+        pageControl.isUserInteractionEnabled = false
+        pageControl.alpha = 0
+        return pageControl
     }()
 
     override init(frame: CGRect) {
@@ -27,19 +55,22 @@ class HomeView: UIView {
 
     private func setup() {
         backgroundColor = .colors(.background)
+
+        addSubview(headerImageView)
         addSubview(collectionView)
-
-        let layout = UICollectionViewCompositionalLayout { [weak self] sectionIndex, environment in
-            return self?.createSectionLayout(for: sectionIndex)
-        }
-
-        collectionView.collectionViewLayout = layout
+        collectionView.addSubview(pageControl)
 
         NSLayoutConstraint.activate([
-            collectionView.topAnchor.constraint(equalTo: topAnchor),
+            headerImageView.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor),
+            headerImageView.centerXAnchor.constraint(equalTo: centerXAnchor),
+
+            collectionView.topAnchor.constraint(equalTo: headerImageView.bottomAnchor, constant: 16),
             collectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
             collectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            collectionView.trailingAnchor.constraint(equalTo: trailingAnchor)
+            collectionView.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+            pageControl.centerXAnchor.constraint(equalTo: centerXAnchor),
+            pageControl.bottomAnchor.constraint(equalTo: collectionView.topAnchor, constant: 180)
         ])
     }
 
@@ -47,53 +78,96 @@ class HomeView: UIView {
         guard let snapshot = (collectionView.dataSource as? UICollectionViewDiffableDataSource<Section, Item>)?.snapshot() else {
             return createDefaultLayout()
         }
+
         switch snapshot.sectionIdentifiers[section] {
         case .promotions:
-            return createHorizontalLayout(itemWidth: .absolute(UIScreen.main.bounds.width/1.15), itemHeight: .absolute(UIScreen.main.bounds.width/2.1), groupHeight: .absolute(UIScreen.main.bounds.width/2.1), itemSpacing: 8, groupSpacing: 20)
+            return makePromotionLayoutSection()
         case .categories:
-            return createHorizontalLayout(itemWidth: .absolute(UIScreen.main.bounds.width/3.6), itemHeight: .absolute(UIScreen.main.bounds.width/3.6), groupHeight: .absolute(UIScreen.main.bounds.width/3.6), itemSpacing: 8, groupSpacing: 20)
+            return makeCategoryLayoutSection()
         case .series:
-            return createHorizontalLayout(itemWidth: .absolute(UIScreen.main.bounds.width/3.6), itemHeight: .absolute(UIScreen.main.bounds.width/3.6), groupHeight: .absolute(UIScreen.main.bounds.width/3.6), itemSpacing: 8, groupSpacing: 20)
+            return makeSeriesLayoutSection()
         case .livechannels:
-            return createHorizontalLayout(itemWidth: .absolute(UIScreen.main.bounds.width/3.6), itemHeight: .absolute(UIScreen.main.bounds.width/3.6), groupHeight: .absolute(UIScreen.main.bounds.width/3.6), itemSpacing: 8, groupSpacing: 20)
+            return makeLivechannelsLayoutSection()
         case .epgs:
-            return createHorizontalLayout(itemWidth: .absolute(UIScreen.main.bounds.width/3.6), itemHeight: .absolute(UIScreen.main.bounds.width/3.6), groupHeight: .absolute(UIScreen.main.bounds.width/3.6), itemSpacing: 8, groupSpacing: 20)
+            return makeEpgsLayoutSection()
         }
     }
 
-    private func createHorizontalLayout(itemWidth: NSCollectionLayoutDimension, itemHeight: NSCollectionLayoutDimension, groupHeight: NSCollectionLayoutDimension, itemSpacing: CGFloat, groupSpacing: CGFloat) -> NSCollectionLayoutSection {
-        // Define the size of the item (square or flexible)
-        let itemSize = NSCollectionLayoutSize(widthDimension: itemWidth, heightDimension: itemHeight)
-        let item = NSCollectionLayoutItem(layoutSize: itemSize)
+    private enum Constants {
+        static let promotionSectionSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(0.85), heightDimension: .absolute(180))
+        static let categorySectionSize = NSCollectionLayoutSize(widthDimension: .absolute(104), heightDimension: .absolute(128))
+        static let seriesSectionSize = NSCollectionLayoutSize(widthDimension: .absolute(104), heightDimension: .estimated(189))
+        static let livechannelsSectionSize = NSCollectionLayoutSize(widthDimension: .absolute(104), heightDimension: .absolute(104))
+        static let epgsSectionSize = NSCollectionLayoutSize(widthDimension: .absolute(216), heightDimension: .absolute(168))
+        static let promotionSectionInsets = UIEdgeInsets(top: 0, left: 24, bottom: 14, right: 24)
+        static let sectionInsets = NSDirectionalEdgeInsets(top: 8, leading: 20, bottom: 20, trailing: 20)
+        static let groupSpacing: CGFloat = 8
+        static let headerHeight: CGFloat = 24
+    }
 
-        // Add spacing between items
-        item.edgeSpacing = NSCollectionLayoutEdgeSpacing(leading: .fixed(itemSpacing), top: nil, trailing: .fixed(itemSpacing), bottom: nil)
+    private func makePromotionLayoutSection() -> NSCollectionLayoutSection {
+        let item = NSCollectionLayoutItem(layoutSize: Constants.promotionSectionSize)
+        let section = NSCollectionLayoutSection(group: .horizontal(
+            layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .absolute(180)),
+            subitems: [item]
+        ))
+        section.interGroupSpacing = Constants.groupSpacing
+        section.orthogonalScrollingBehavior = .groupPaging
 
-        // Define the group size
-        let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: groupHeight)
-        let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [item])
+        let leadingTrailingInset = UIScreen.main.bounds.width * 0.15 / 2
+        section.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: leadingTrailingInset, bottom: 24, trailing: leadingTrailingInset)
 
-        // Add spacing between items within the group
-        group.interItemSpacing = .fixed(groupSpacing)
-
-        // Section setup
-        let section = NSCollectionLayoutSection(group: group)
-        section.orthogonalScrollingBehavior = .continuous
-
-        // Define section insets (padding around the section)
-        section.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20)
+        section.visibleItemsInvalidationHandler = { [weak self] (visibleItems, point, _) in
+            if let firstVisibleItem = visibleItems.first {
+                self?.scrollDelegate?.didScrollPromotions(point: point)
+            }
+        }
 
         return section
     }
 
+    private func makeCategoryLayoutSection() -> NSCollectionLayoutSection {
+        return makeSection(withSize: Constants.categorySectionSize)
+    }
+
+    private func makeSeriesLayoutSection() -> NSCollectionLayoutSection {
+        return makeSection(withSize: Constants.seriesSectionSize)
+    }
+
+    private func makeLivechannelsLayoutSection() -> NSCollectionLayoutSection {
+        return makeSection(withSize: Constants.livechannelsSectionSize)
+    }
+
+    private func makeEpgsLayoutSection() -> NSCollectionLayoutSection {
+        return makeSection(withSize: Constants.epgsSectionSize)
+    }
+
+    private func makeSection(withSize size: NSCollectionLayoutSize) -> NSCollectionLayoutSection {
+        let item = NSCollectionLayoutItem(layoutSize: size)
+        let group = NSCollectionLayoutGroup.horizontal(layoutSize: size, subitems: [item])
+        let section = NSCollectionLayoutSection(group: group)
+        section.interGroupSpacing = Constants.groupSpacing
+        section.orthogonalScrollingBehavior = .continuous
+        section.contentInsets = Constants.sectionInsets
+        section.boundarySupplementaryItems = [makeHeader()]
+        return section
+    }
+
+    private func makeHeader() -> NSCollectionLayoutBoundarySupplementaryItem {
+        let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(Constants.headerHeight))
+        let item = NSCollectionLayoutBoundarySupplementaryItem(
+            layoutSize: headerSize,
+            elementKind: UICollectionView.elementKindSectionHeader,
+            alignment: .top
+        )
+        return item
+    }
 
     private func createDefaultLayout() -> NSCollectionLayoutSection {
         let itemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(50))
         let item = NSCollectionLayoutItem(layoutSize: itemSize)
-
         let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(50))
         let group = NSCollectionLayoutGroup.vertical(layoutSize: groupSize, subitems: [item])
-
         return NSCollectionLayoutSection(group: group)
     }
 }

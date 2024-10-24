@@ -7,13 +7,16 @@
 
 import UIKit
 import Combine
+import SwiftUI
 
 class HomeViewController: UIViewController {
-   
+
+    weak var coordinator: HomeCoordinator?
+    
     private var homeView: HomeView!
     
     private var viewModel: HomeViewModel!
-    
+
     private var cancellables = Set<AnyCancellable>()
     
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
@@ -26,17 +29,21 @@ class HomeViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         viewModel = HomeViewModel()
-        setupCollectionView()
+        setup()
         setupDataSource()
         setupBindings()
     }
 
-    private func setupCollectionView() {
+    private func setup() {
+        homeView.scrollDelegate = self
+        homeView.collectionView.delegate = self
+
         homeView.collectionView.registerReusableCell(PromotionCell.self)
         homeView.collectionView.registerReusableCell(CategoryCell.self)
         homeView.collectionView.registerReusableCell(SeriesCell.self)
         homeView.collectionView.registerReusableCell(LivechannelCell.self)
         homeView.collectionView.registerReusableCell(EpgCell.self)
+        homeView.collectionView.registerReusableSupplementaryView(elementKind: UICollectionView.elementKindSectionHeader, SectionHeaderView.self)
     }
 
     private func setupDataSource() {
@@ -68,12 +75,37 @@ class HomeViewController: UIViewController {
                 return cell
             }
         }
+
+        dataSource.supplementaryViewProvider = { (collectionView, kind, indexPath) in
+            guard kind == UICollectionView.elementKindSectionHeader else { return (UIView() as? UICollectionReusableView)! }
+
+            let headerView: SectionHeaderView = collectionView.dequeueReusableSupplementaryView(ofKind: kind, for: indexPath)
+
+            guard let snapshot = (collectionView.dataSource as? UICollectionViewDiffableDataSource<Section, Item>)?.snapshot() else {
+                return (UIView() as? UICollectionReusableView)!
+            }
+
+            headerView.section = snapshot.sectionIdentifiers[indexPath.section]
+            headerView.delegate = self
+
+            return headerView
+        }
+    }
+
+    private func setupBindings() {
+        viewModel.$snapshotItems
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] snapshotItems in
+                self?.applySnapshot(snapshotItems: snapshotItems)
+                self?.homeView.pageControl.numberOfPages = self?.viewModel.categories.count ?? 0
+                self?.homeView.pageControl.alpha = 1
+            }
+            .store(in: &cancellables)
     }
 
     private func applySnapshot(snapshotItems: [Section: [Item]]) {
         DispatchQueue.main.async {
             var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-
             let orderedSections: [Section] = [.promotions, .categories, .series, .livechannels, .epgs]
 
             orderedSections.forEach { section in
@@ -82,42 +114,35 @@ class HomeViewController: UIViewController {
                     snapshot.appendItems(items, toSection: section)
                 }
             }
-
             self.dataSource.apply(snapshot, animatingDifferences: true)
         }
     }
+}
 
+extension HomeViewController: SectionHeaderDelegate {
+    func deleteButtonAction(section: Section) {
+        if viewModel.canDeleteSection(section) {
+            viewModel.removeSection(section)
 
-    private func appendItemsToSnapshot<T>(items: [T], section: Section, into snapshot: inout NSDiffableDataSourceSnapshot<Section, Item>) {
-        let mappedItems = items.compactMap { item in
-            return mapItemToEnum(item: item)
+            var currentSnapshot = dataSource.snapshot()
+            currentSnapshot.deleteSections([section])
+            dataSource.apply(currentSnapshot, animatingDifferences: true)
         }
-        snapshot.appendItems(mappedItems, toSection: section)
     }
+}
 
-    private func setupBindings() {
-        viewModel.$snapshotItems
-            .sink { [weak self] snapshotItems in
-                self?.applySnapshot(snapshotItems: snapshotItems)
-            }
-            .store(in: &cancellables)
-    }
-
-
-    private func mapItemToEnum(item: Any) -> Item? {
-        switch item {
-        case let promotion as Promotion:
-            return .promotion(promotion)
-        case let category as Category:
-            return .category(category)
-        case let series as Asset:
-            return .series(series)
-        case let livechannel as Asset:
-            return .livechannel(livechannel)
-        case let epg as Asset:
-            return .epg(epg)
-        default:
-            return nil
+extension HomeViewController: UICollectionViewDelegate {
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        guard dataSource.snapshot().sectionIdentifiers[indexPath.section].isAssetSection else {
+            return
         }
+        coordinator?.showAssetDetail()
+    }
+}
+
+extension HomeViewController: HomeViewPromotionsScrollDelegate {
+    func didScrollPromotions(point: CGPoint) {
+        let pageIndex = Int((point.x + UIScreen.main.bounds.width / 2) / UIScreen.main.bounds.width)
+        homeView.pageControl.currentPage = pageIndex
     }
 }
